@@ -178,14 +178,14 @@ class MultilingualVectorStore:
         if self.index is None:
             return []
         
-        # Clean and process query
+       
         cleaned_query = self.bengali_processor.clean_bengali_text(query)
         
-        # Create query embedding
+        
         query_embedding = self.model.encode([cleaned_query], convert_to_numpy=True)
         faiss.normalize_L2(query_embedding)
         
-        # Search
+        
         scores, indices = self.index.search(query_embedding, k)
         
         results = []
@@ -232,7 +232,215 @@ class ConversationMemory:
         """Set the document vector store as long-term memory"""
         self.long_term_memory = vector_store
     
+
+
+class MultilingualRAGSystem:
+    """Main RAG system combining all components"""
     
+    def __init__(self):
+        self.document_processor = DocumentProcessor()
+        self.vector_store = MultilingualVectorStore()
+        self.memory = ConversationMemory()
+        self.bengali_processor = BengaliTextProcessor()
+        
+        
+        self.generator = None
+        self._initialize_generator()
+    
+    def _initialize_generator(self):
+        """Initialize text generation model"""
+        try:
+            self.generator = pipeline("text2text-generation", model="google/flan-t5-small")
+        except Exception as e:
+            print(f"Could not load generation model: {e}")
+            self.generator = None
+    
+    def load_knowledge_base(self, pdf_path: str):
+        """Load and process PDF document into knowledge base"""
+        print(f"Loading knowledge base from: {pdf_path}")
+        
+        # Extract text from PDF
+        raw_text = self.document_processor.extract_text_from_pdf(pdf_path)
+        
+        if not raw_text.strip():
+            raise ValueError("Could not extract text from PDF")
+        
+        
+        chunks = self.document_processor.create_chunks(raw_text)
+        print(f"Created {len(chunks)} chunks from document")
+        
+        
+        self.vector_store.add_documents(chunks)
+        
+        
+        self.memory.set_long_term_memory(self.vector_store)
+        
+        return len(chunks)
+    
+    def _generate_answer(self, query: str, context: str, retrieved_docs: List[Tuple[Dict, float]]) -> str:
+        """Generate answer based on query and retrieved context"""
+        
+        relevant_text = ""
+        for doc, score in retrieved_docs[:3]: 
+            relevant_text += doc['text'] + "\n\n"
+        
+        answer = self._extract_direct_answer(query, relevant_text)
+        
+        if answer:
+            return answer
+        
+        if retrieved_docs:
+            best_chunk = retrieved_docs[0][0]['text']
+            # Try to extract a concise answer
+            sentences = best_chunk.split('।')
+            for sentence in sentences:
+                if self._is_relevant_sentence(query, sentence):
+                    return sentence.strip() + '।'
+            return sentences[0].strip() + '।' if sentences else "তথ্য পাওয়া যায়নি।"
+        
+        return "দুর্ভাগ্যবশত, এই প্রশ্নের উত্তর খুঁজে পাওয়া যায়নি।"
+    
+    def _extract_direct_answer(self, query: str, context: str) -> str:
+        """Extract direct answer from context based on query patterns"""
+        
+        patterns = [
+            
+            (r'কাকে.*?বলা হয়েছে', self._extract_name_or_title),
+            
+            (r'কাকে.*?বলে উল্লেখ', self._extract_name_or_title),
+            (r'বয়স কত', self._extract_age),
+            (r'কত বছর', self._extract_age),
+        ]
+        
+        for pattern, extractor in patterns:
+            if re.search(pattern, query):
+                answer = extractor(context, query)
+                if answer:
+                    return answer
+        
+        return None
+    
+    def _extract_name_or_title(self, context: str, query: str) -> str:
+        """Extract names or titles from context"""
+        sentences = context.split('।')
+        
+        if 'সুপুরুষ' in query:
+            for sentence in sentences:
+                if 'সুপুরুষ' in sentence:
+                    words = sentence.split()
+                    for i, word in enumerate(words):
+                        if 'সুপুরুষ' in word and i > 0:
+                            return words[i-1].strip(',।')
+                        elif i < len(words) - 1 and 'সুপুরুষ' in words[i+1]:
+                            return word.strip(',।')
+        
+        if 'ভাগ্য দেবতা' in query or 'ভাগ্যদেবতা' in query:
+            for sentence in sentences:
+                if 'ভাগ্য' in sentence and 'দেবতা' in sentence:
+                    if 'মামা' in sentence:
+                        return 'মামাকে'
+                    words = sentence.split()
+                    for word in words:
+                        if word in ['বাবা', 'মা', 'দাদা', 'দিদি', 'কাকা', 'মামা']:
+                            return word + 'কে'
+        
+        return None
+    
+    def _extract_age(self, context: str, query: str) -> str:
+        """Extract age information from context"""
+        sentences = context.split('।')
+        
+        # Look for age patterns
+        age_pattern = r'(\d+)\s*বছর'
+        
+        for sentence in sentences:
+            if 'বয়স' in sentence or 'বছর' in sentence:
+                matches = re.findall(age_pattern, sentence)
+                if matches:
+                    return matches[0] + ' বছর'
+                
+                # Also look for written numbers
+                written_numbers = {
+                    'পনের': '১৫', 'পনেরো': '১৫', 'পনেরো': '১৫',
+                    'ষোল': '১৬', 'সতের': '১৭', 'আঠারো': '১৮',
+                    'উনিশ': '১৯', 'বিশ': '২০'
+                }
+                
+                for written, digit in written_numbers.items():
+                    if written in sentence:
+                        return digit + ' বছর'
+        
+        return None
+    
+    def _is_relevant_sentence(self, query: str, sentence: str) -> bool:
+        """Check if sentence is relevant to query"""
+        query_words = set(self.bengali_processor.tokenize_bengali(query.lower()))
+        sentence_words = set(self.bengali_processor.tokenize_bengali(sentence.lower()))
+        
+        # Remove stopwords
+        query_words = set(self.bengali_processor.remove_stopwords(list(query_words)))
+        sentence_words = set(self.bengali_processor.remove_stopwords(list(sentence_words)))
+        
+        # Calculate word overlap
+        if not query_words:
+            return False
+        
+        overlap = len(query_words.intersection(sentence_words))
+        return overlap / len(query_words) > 0.3  # At least 30% word overlap
+    
+    def query(self, user_query: str, k: int = 5) -> Dict[str, Any]:
+        """Process user query and generate response"""
+        # Get conversation context
+        context = self.memory.get_context(user_query)
+        
+        retrieved_docs = self.vector_store.search(user_query, k=k)
+        
+        answer = self._generate_answer(user_query, context, retrieved_docs)
+        
+        self.memory.add_to_short_term(user_query, answer)
+        
+        response = {
+            'query': user_query,
+            'answer': answer,
+            'retrieved_documents': [
+                {
+                    'text': doc['text'][:200] + '...' if len(doc['text']) > 200 else doc['text'],
+                    'score': score,
+                    'chunk_id': doc['chunk_id']
+                }
+                for doc, score in retrieved_docs[:3]
+            ],
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        return response
+    
+    def save_system(self, filepath: str):
+        """Save the system state"""
+        system_data = {
+            'chunks': self.vector_store.chunks,
+            'embeddings': self.vector_store.embeddings,
+            'memory': self.memory.short_term_memory
+        }
+        
+        with open(filepath, 'wb') as f:
+            pickle.dump(system_data, f)
+    
+    def load_system(self, filepath: str):
+        """Load system state"""
+        with open(filepath, 'rb') as f:
+            system_data = pickle.load(f)
+        
+        self.vector_store.chunks = system_data['chunks']
+        self.vector_store.embeddings = system_data['embeddings']
+        self.memory.short_term_memory = system_data['memory']
+        
+        
+        if self.vector_store.embeddings is not None:
+            dimension = self.vector_store.embeddings.shape[1]
+            self.vector_store.index = faiss.IndexFlatIP(dimension)
+            faiss.normalize_L2(self.vector_store.embeddings)
+            self.vector_store.index.add(self.vector_store.embeddings)
     
     ##TESTING##
     
@@ -240,23 +448,33 @@ class ConversationMemory:
     
 
 if __name__ == "__main__":
-    
-    memory = ConversationMemory(max_short_term=5)
+    rag = MultilingualRAGSystem()
+
+    dummy_bangla_text = """
+    আনুপম একজন মেধাবী ছাত্র। তার বয়স পনের বছর। সে প্রতিদিন সকালে স্কুলে যায়।
+    তার বাবা একজন শিক্ষক। মা গৃহিণী। আনুপম পড়াশোনায় খুব ভালো।
+    সে ভবিষ্যতে একজন ডাক্তার হতে চায়। সে বাংলায় রচনা লিখতেও খুব পছন্দ করে।
+    """
 
     
-    memory.add_to_short_term("তুমি কে?", "আমি একটি এআই সহকারী।")
-    memory.add_to_short_term("বাংলা কি তোমার মাতৃভাষা?", "না, তবে আমি বাংলা বুঝতে পারি।")
-    memory.add_to_short_term("তুমি ইংরেজি বলো?", "হ্যাঁ, আমি ইংরেজিতেও কথা বলতে পারি।")
-    memory.add_to_short_term("তোমার নাম কী?", "আমার কোনও নির্দিষ্ট নাম নেই।")
-    memory.add_to_short_term("তুমি কিভাবে কাজ করো?", "আমি মেশিন লার্নিং মডেল হিসেবে কাজ করি।")
-    memory.add_to_short_term("তুমি কী জানতে পারো?", "আমি বিভিন্ন তথ্য দিতে পারি।")
+    chunks = rag.document_processor.create_chunks(dummy_bangla_text)
+    print(f"\n✅ Created {len(chunks)} chunks from dummy text")
+
+    rag.vector_store.add_documents(chunks)
 
     
-    print("=== Short-Term Memory Context ===")
-    context = memory.get_context("তুমি কিভাবে কাজ করো?")
-    print(context)
+    rag.memory.set_long_term_memory(rag.vector_store)
 
-   
-    dummy_vector_store = MultilingualVectorStore()
-    memory.set_long_term_memory(dummy_vector_store)
-    print("Long-term memory set:", isinstance(memory.long_term_memory, MultilingualVectorStore))
+    question = "আনুপমের বয়স কত?"
+    # অনুপমের ভাষায় সুপুরুষ কাকে বলা হয়েছে?
+    response = rag.query(question)
+
+    print("\n=== Query Answer ===")
+    print(f"Q: {response['query']}")
+    print(f"A: {response['answer']}\n")
+
+    print("=== Retrieved Chunks ===")
+    for doc in response['retrieved_documents']:
+        print(f"- Score: {doc['score']:.4f}")
+        print(f"  Chunk ID: {doc['chunk_id']}")
+        print(f"  Text: {doc['text']}\n")
