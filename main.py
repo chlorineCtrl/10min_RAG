@@ -37,7 +37,6 @@ class BengaliTextProcessor:
     """Specialized processor for Bengali text cleaning and normalization"""
     
     def __init__(self):
-        # Bengali stopwords (common words to filter out)
         self.bengali_stopwords = set([
             'এবং', 'বা', 'যে', 'এই', 'সে', 'তার', 'তাকে', 'তাদের', 'আমি', 'আমার', 
             'আমাদের', 'তুমি', 'তোমার', 'তোমাদের', 'সেই', 'এটি', 'এটা', 'ওটা', 
@@ -46,7 +45,6 @@ class BengaliTextProcessor:
             'দিয়ে', 'করে', 'হয়ে', 'গিয়ে', 'এসে', 'থেকে', 'পর্যন্ত', 'মধ্যে'
         ])
         
-        # Bengali punctuation marks
         self.bengali_punctuation = '।,;:!?""''()[]{}–—…'
     
     def clean_bengali_text(self, text: str) -> str:
@@ -54,23 +52,18 @@ class BengaliTextProcessor:
         if not text:
             return ""
         
-        # Normalize unicode characters
         text = unicodedata.normalize('NFC', text)
         
-        # Remove extra whitespaces
         text = re.sub(r'\s+', ' ', text)
         
-        # Remove unwanted characters but keep Bengali punctuation
         text = re.sub(r'[^\u0980-\u09FF\u0020\u002E\u002C\u003B\u003A\u0021\u003F\u201C\u201D\u2018\u2019\u0028\u0029\u005B\u005D\u007B\u007D\u2013\u2014\u2026]', ' ', text)
         
-        # Normalize punctuation
-        text = re.sub(r'[।]', '।', text)  # Ensure proper Bengali full stop
+        text = re.sub(r'[।]', '।', text)  
         
         return text.strip()
     
     def tokenize_bengali(self, text: str) -> List[str]:
         """Tokenize Bengali text into words"""
-        # Simple word tokenization for Bengali
         words = re.findall(r'\S+', text)
         return [word for word in words if word not in self.bengali_punctuation]
     
@@ -115,7 +108,6 @@ class DocumentProcessor:
         # Clean the text
         cleaned_text = self.bengali_processor.clean_bengali_text(text)
         
-        # Split into sentences using both English and Bengali sentence endings
         sentences = re.split(r'[।\.!?]+', cleaned_text)
         sentences = [s.strip() for s in sentences if s.strip()]
         
@@ -127,7 +119,6 @@ class DocumentProcessor:
             words = sentence.split()
             sentence_word_count = len(words)
             
-            # If adding this sentence would exceed chunk size, start a new chunk
             if current_words + sentence_word_count > chunk_size and current_chunk:
                 chunks.append({
                     'text': current_chunk.strip(),
@@ -171,15 +162,12 @@ class MultilingualVectorStore:
         """Add document chunks to the vector store"""
         self.chunks = chunks
         
-        # Create embeddings for all chunks
         texts = [chunk['text'] for chunk in chunks]
         self.embeddings = self.model.encode(texts, convert_to_numpy=True)
         
-        # Create FAISS index for efficient similarity search
         dimension = self.embeddings.shape[1]
-        self.index = faiss.IndexFlatIP(dimension)  # Inner product for cosine similarity
+        self.index = faiss.IndexFlatIP(dimension)  
         
-        # Normalize embeddings for cosine similarity
         faiss.normalize_L2(self.embeddings)
         self.index.add(self.embeddings)
         
@@ -209,31 +197,66 @@ class MultilingualVectorStore:
     
     
     
+class ConversationMemory:
+    """Manage both short-term (conversation) and long-term (document) memory"""
+    
+    def __init__(self, max_short_term: int = 10):
+        self.short_term_memory = []  
+        self.max_short_term = max_short_term
+        self.long_term_memory = None  
+        
+    def add_to_short_term(self, query: str, response: str):
+        """Add query-response pair to short-term memory"""
+        self.short_term_memory.append({
+            'timestamp': datetime.now(),
+            'query': query,
+            'response': response
+        })
+        
+        
+        if len(self.short_term_memory) > self.max_short_term:
+            self.short_term_memory = self.short_term_memory[-self.max_short_term:]
+    
+    def get_context(self, current_query: str) -> str:
+        """Get relevant context from short-term memory"""
+        if not self.short_term_memory:
+            return ""
+        
+        context = "Previous conversation:\n"
+        for memory in self.short_term_memory[-3:]:  
+            context += f"Q: {memory['query']}\nA: {memory['response']}\n\n"
+        
+        return context
+    
+    def set_long_term_memory(self, vector_store: MultilingualVectorStore):
+        """Set the document vector store as long-term memory"""
+        self.long_term_memory = vector_store
+    
+    
+    
     ##TESTING##
     
     
     
+
 if __name__ == "__main__":
-    # Sample chunks (normally generated from PDF using DocumentProcessor)
-    chunks = [
-        {'text': 'আমি একজন ছাত্র। আমি প্রতিদিন স্কুলে যাই।', 'chunk_id': 0, 'word_count': 8, 'sentence_range': (0, 1)},
-        {'text': 'বাংলা ভাষা আমার মাতৃভাষা।', 'chunk_id': 1, 'word_count': 5, 'sentence_range': (2, 3)},
-        {'text': 'I love programming and solving problems.', 'chunk_id': 2, 'word_count': 6, 'sentence_range': (4, 5)},
-    ]
+    
+    memory = ConversationMemory(max_short_term=5)
 
-    # Initialize the vector store
-    vector_store = MultilingualVectorStore()
+    
+    memory.add_to_short_term("তুমি কে?", "আমি একটি এআই সহকারী।")
+    memory.add_to_short_term("বাংলা কি তোমার মাতৃভাষা?", "না, তবে আমি বাংলা বুঝতে পারি।")
+    memory.add_to_short_term("তুমি ইংরেজি বলো?", "হ্যাঁ, আমি ইংরেজিতেও কথা বলতে পারি।")
+    memory.add_to_short_term("তোমার নাম কী?", "আমার কোনও নির্দিষ্ট নাম নেই।")
+    memory.add_to_short_term("তুমি কিভাবে কাজ করো?", "আমি মেশিন লার্নিং মডেল হিসেবে কাজ করি।")
+    memory.add_to_short_term("তুমি কী জানতে পারো?", "আমি বিভিন্ন তথ্য দিতে পারি।")
 
-    # Add document chunks
-    vector_store.add_documents(chunks)
+    
+    print("=== Short-Term Memory Context ===")
+    context = memory.get_context("তুমি কিভাবে কাজ করো?")
+    print(context)
 
-    # Run a search query
-    query = "আমি প্রতিদিন কোথায় যাই?"
-    results = vector_store.search(query, k=2)
-
-    # Print the results
-    print("\nSearch Results:")
-    for chunk, score in results:
-        print(f"Score: {score:.4f}")
-        print(f"Text: {chunk['text']}")
-        print("-" * 50)
+   
+    dummy_vector_store = MultilingualVectorStore()
+    memory.set_long_term_memory(dummy_vector_store)
+    print("Long-term memory set:", isinstance(memory.long_term_memory, MultilingualVectorStore))
