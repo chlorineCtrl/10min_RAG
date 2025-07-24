@@ -23,8 +23,14 @@ import re
 import unicodedata
 import faiss
 from sentence_transformers import SentenceTransformer
-from transformers import pipeline, AutoTokenizer, AutoModel
 import torch
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from azure.ai.inference import ChatCompletionsClient
+from azure.ai.inference.models import SystemMessage, UserMessage
+from azure.core.credentials import AzureKeyCredential
 
 try:
     nltk.download('punkt', quiet=True)
@@ -70,8 +76,6 @@ class BengaliTextProcessor:
     def remove_stopwords(self, words: List[str]) -> List[str]:
         """Remove Bengali stopwords"""
         return [word for word in words if word.lower() not in self.bengali_stopwords]
-    
-
 
 
 class DocumentProcessor:
@@ -145,9 +149,8 @@ class DocumentProcessor:
             })
         
         return chunks
-    
-    
-    
+
+
 class MultilingualVectorStore:
     """Vector store supporting both Bengali and English"""
     
@@ -178,13 +181,10 @@ class MultilingualVectorStore:
         if self.index is None:
             return []
         
-       
         cleaned_query = self.bengali_processor.clean_bengali_text(query)
-        
         
         query_embedding = self.model.encode([cleaned_query], convert_to_numpy=True)
         faiss.normalize_L2(query_embedding)
-        
         
         scores, indices = self.index.search(query_embedding, k)
         
@@ -194,9 +194,8 @@ class MultilingualVectorStore:
                 results.append((self.chunks[idx], float(score)))
         
         return results
-    
-    
-    
+
+
 class ConversationMemory:
     """Manage both short-term (conversation) and long-term (document) memory"""
     
@@ -212,7 +211,6 @@ class ConversationMemory:
             'query': query,
             'response': response
         })
-        
         
         if len(self.short_term_memory) > self.max_short_term:
             self.short_term_memory = self.short_term_memory[-self.max_short_term:]
@@ -232,170 +230,105 @@ class ConversationMemory:
         """Set the document vector store as long-term memory"""
         self.long_term_memory = vector_store
     
+    def get_short_term_memory(self) -> List[Dict]:
+        return self.short_term_memory
 
 
 class MultilingualRAGSystem:
-    """Main RAG system combining all components"""
+    """Main RAG system combining all components with OpenAI GPT-4.1"""
     
-    def __init__(self):
+    def __init__(self, github_token: str = None):
         self.document_processor = DocumentProcessor()
         self.vector_store = MultilingualVectorStore()
         self.memory = ConversationMemory()
         self.bengali_processor = BengaliTextProcessor()
         
+        # Initialize OpenAI GPT-4.1 client
+        self.endpoint = "https://models.github.ai/inference"
+        self.model = "openai/gpt-4.1"
+        self.token = github_token or os.environ.get("GITHUB_TOKEN")
         
-        self.generator = None
-        self._initialize_generator()
-    
-    def _initialize_generator(self):
-        """Initialize text generation model"""
-        try:
-            self.generator = pipeline("text2text-generation", model="google/flan-t5-small")
-        except Exception as e:
-            print(f"Could not load generation model: {e}")
-            self.generator = None
-    
+        if not self.token:
+            raise ValueError("GitHub token is required. Set GITHUB_TOKEN environment variable or pass it to constructor.")
+        
+        self.client = ChatCompletionsClient(
+            endpoint=self.endpoint,
+            credential=AzureKeyCredential(self.token),
+        )
+        
+        self.system_prompt = """You are an intelligent multilingual assistant specializing in Bengali and English text analysis. Your task is to answer questions based on provided context from documents.
+
+Key instructions:
+1. Answer questions accurately based on the provided context
+2. If the context contains the answer, provide a direct and concise response
+3. For Bengali questions, respond in Bengali; for English questions, respond in English
+4. If you cannot find the answer in the provided context, say so clearly
+5. Be precise and avoid making up information not present in the context
+6. When extracting specific information like names, ages, or titles, quote directly from the context
+7. Maintain the original language and tone of the source material when possible
+
+Context format: You will receive relevant document chunks and conversation history to help answer the current question."""
+
     def load_knowledge_base(self, pdf_path: str):
         """Load and process PDF document into knowledge base"""
         print(f"Loading knowledge base from: {pdf_path}")
         
-        # Extract text from PDF
         raw_text = self.document_processor.extract_text_from_pdf(pdf_path)
         
         if not raw_text.strip():
             raise ValueError("Could not extract text from PDF")
         
-        
         chunks = self.document_processor.create_chunks(raw_text)
         print(f"Created {len(chunks)} chunks from document")
         
-        
         self.vector_store.add_documents(chunks)
-        
-        
         self.memory.set_long_term_memory(self.vector_store)
         
         return len(chunks)
     
-    def _generate_answer(self, query: str, context: str, retrieved_docs: List[Tuple[Dict, float]]) -> str:
-        """Generate answer based on query and retrieved context"""
-        
-        relevant_text = ""
-        for doc, score in retrieved_docs[:3]: 
-            relevant_text += doc['text'] + "\n\n"
-        
-        answer = self._extract_direct_answer(query, relevant_text)
-        
-        if answer:
-            return answer
-        
-        if retrieved_docs:
-            best_chunk = retrieved_docs[0][0]['text']
-            # Try to extract a concise answer
-            sentences = best_chunk.split('।')
-            for sentence in sentences:
-                if self._is_relevant_sentence(query, sentence):
-                    return sentence.strip() + '।'
-            return sentences[0].strip() + '।' if sentences else "তথ্য পাওয়া যায়নি।"
-        
-        return "দুর্ভাগ্যবশত, এই প্রশ্নের উত্তর খুঁজে পাওয়া যায়নি।"
-    
-    def _extract_direct_answer(self, query: str, context: str) -> str:
-        """Extract direct answer from context based on query patterns"""
-        
-        patterns = [
+    def _generate_answer_with_gpt4(self, query: str, context: str, retrieved_docs: List[Tuple[Dict, float]]) -> str:
+        """Generate answer using OpenAI GPT-4.1"""
+        try:
+            relevant_context = ""
+            for i, (doc, score) in enumerate(retrieved_docs[:3]):
+                relevant_context += f"Context {i+1} (Relevance: {score:.3f}):\n{doc['text']}\n\n"
             
-            (r'কাকে.*?বলা হয়েছে', self._extract_name_or_title),
+            user_message = f"""Based on the following context, please answer this question:
+
+Question: {query}
+
+Available Context:
+{relevant_context}
+
+Previous Conversation Context:
+{context}
+
+Please provide a direct and accurate answer based on the available context."""
+
+            response = self.client.complete(
+                messages=[
+                    SystemMessage(self.system_prompt),
+                    UserMessage(user_message),
+                ],
+                temperature=0.3,  
+                top_p=0.9,
+                max_tokens=500,
+                model=self.model
+            )
             
-            (r'কাকে.*?বলে উল্লেখ', self._extract_name_or_title),
-            (r'বয়স কত', self._extract_age),
-            (r'কত বছর', self._extract_age),
-        ]
-        
-        for pattern, extractor in patterns:
-            if re.search(pattern, query):
-                answer = extractor(context, query)
-                if answer:
-                    return answer
-        
-        return None
-    
-    def _extract_name_or_title(self, context: str, query: str) -> str:
-        """Extract names or titles from context"""
-        sentences = context.split('।')
-        
-        if 'সুপুরুষ' in query:
-            for sentence in sentences:
-                if 'সুপুরুষ' in sentence:
-                    words = sentence.split()
-                    for i, word in enumerate(words):
-                        if 'সুপুরুষ' in word and i > 0:
-                            return words[i-1].strip(',।')
-                        elif i < len(words) - 1 and 'সুপুরুষ' in words[i+1]:
-                            return word.strip(',।')
-        
-        if 'ভাগ্য দেবতা' in query or 'ভাগ্যদেবতা' in query:
-            for sentence in sentences:
-                if 'ভাগ্য' in sentence and 'দেবতা' in sentence:
-                    if 'মামা' in sentence:
-                        return 'মামাকে'
-                    words = sentence.split()
-                    for word in words:
-                        if word in ['বাবা', 'মা', 'দাদা', 'দিদি', 'কাকা', 'মামা']:
-                            return word + 'কে'
-        
-        return None
-    
-    def _extract_age(self, context: str, query: str) -> str:
-        """Extract age information from context"""
-        sentences = context.split('।')
-        
-        # Look for age patterns
-        age_pattern = r'(\d+)\s*বছর'
-        
-        for sentence in sentences:
-            if 'বয়স' in sentence or 'বছর' in sentence:
-                matches = re.findall(age_pattern, sentence)
-                if matches:
-                    return matches[0] + ' বছর'
-                
-                # Also look for written numbers
-                written_numbers = {
-                    'পনের': '১৫', 'পনেরো': '১৫', 'পনেরো': '১৫',
-                    'ষোল': '১৬', 'সতের': '১৭', 'আঠারো': '১৮',
-                    'উনিশ': '১৯', 'বিশ': '২০'
-                }
-                
-                for written, digit in written_numbers.items():
-                    if written in sentence:
-                        return digit + ' বছর'
-        
-        return None
-    
-    def _is_relevant_sentence(self, query: str, sentence: str) -> bool:
-        """Check if sentence is relevant to query"""
-        query_words = set(self.bengali_processor.tokenize_bengali(query.lower()))
-        sentence_words = set(self.bengali_processor.tokenize_bengali(sentence.lower()))
-        
-        # Remove stopwords
-        query_words = set(self.bengali_processor.remove_stopwords(list(query_words)))
-        sentence_words = set(self.bengali_processor.remove_stopwords(list(sentence_words)))
-        
-        # Calculate word overlap
-        if not query_words:
-            return False
-        
-        overlap = len(query_words.intersection(sentence_words))
-        return overlap / len(query_words) > 0.3  # At least 30% word overlap
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            print(f"Error generating answer with GPT-4.1: {e}")
+            return "দুঃখিত, উত্তর তৈরি করতে সমস্যা হয়েছে। / Sorry, there was an issue generating the answer."
     
     def query(self, user_query: str, k: int = 5) -> Dict[str, Any]:
-        """Process user query and generate response"""
-        # Get conversation context
+        """Process user query and generate response using GPT-4.1"""
         context = self.memory.get_context(user_query)
         
         retrieved_docs = self.vector_store.search(user_query, k=k)
         
-        answer = self._generate_answer(user_query, context, retrieved_docs)
+        answer = self._generate_answer_with_gpt4(user_query, context, retrieved_docs)
         
         self.memory.add_to_short_term(user_query, answer)
         
@@ -435,46 +368,49 @@ class MultilingualRAGSystem:
         self.vector_store.embeddings = system_data['embeddings']
         self.memory.short_term_memory = system_data['memory']
         
-        
         if self.vector_store.embeddings is not None:
             dimension = self.vector_store.embeddings.shape[1]
             self.vector_store.index = faiss.IndexFlatIP(dimension)
             faiss.normalize_L2(self.vector_store.embeddings)
             self.vector_store.index.add(self.vector_store.embeddings)
-    
-    ##TESTING##
-    
-    
-    
+
+
 
 if __name__ == "__main__":
+
     rag = MultilingualRAGSystem()
 
+    # dummy 
     dummy_bangla_text = """
     আনুপম একজন মেধাবী ছাত্র। তার বয়স পনের বছর। সে প্রতিদিন সকালে স্কুলে যায়।
     তার বাবা একজন শিক্ষক। মা গৃহিণী। আনুপম পড়াশোনায় খুব ভালো।
     সে ভবিষ্যতে একজন ডাক্তার হতে চায়। সে বাংলায় রচনা লিখতেও খুব পছন্দ করে।
+    আনুপমের মামা তাকে সুপুরুষ বলে ডাকেন। পরিবারে সবাই তাকে ভাগ্য দেবতা মনে করে।
     """
 
-    
     chunks = rag.document_processor.create_chunks(dummy_bangla_text)
     print(f"\n✅ Created {len(chunks)} chunks from dummy text")
 
     rag.vector_store.add_documents(chunks)
-
-    
     rag.memory.set_long_term_memory(rag.vector_store)
 
-    question = "আনুপমের বয়স কত?"
-    # অনুপমের ভাষায় সুপুরুষ কাকে বলা হয়েছে?
-    response = rag.query(question)
+   
+    questions = [
+        "আনুপমের বাবার বয়স কত?",
+        
+    ]
 
-    print("\n=== Query Answer ===")
-    print(f"Q: {response['query']}")
-    print(f"A: {response['answer']}\n")
+    print("\n=== Testing Questions ===")
+    for question in questions:
+        response = rag.query(question)
+        print(f"\nQ: {response['query']}")
+        print(f"A: {response['answer']}")
+        print("-" * 50)
 
-    print("=== Retrieved Chunks ===")
-    for doc in response['retrieved_documents']:
-        print(f"- Score: {doc['score']:.4f}")
-        print(f"  Chunk ID: {doc['chunk_id']}")
-        print(f"  Text: {doc['text']}\n")
+    rag.save_system("rag_system_gpt4_state.pkl")
+    print("\n✅ Saved system state with GPT-4.1 integration")
+    
+    print("\n=== Conversation History ===")
+    for item in rag.memory.short_term_memory:
+        print(f"Q: {item['query']}")
+        print(f"A: {item['response']}\n")
