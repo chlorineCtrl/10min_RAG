@@ -303,7 +303,7 @@ Available Context:
 Previous Conversation Context:
 {context}
 
-Please provide a direct and accurate answer based on the available context."""
+Please provide a direct and accurate answer based on the available context, and ensure the answer is under 3 words only."""
 
             response = self.client.complete(
                 messages=[
@@ -381,7 +381,7 @@ if __name__ == "__main__":
     rag = MultilingualRAGSystem()
 
     
-    pdf_path = "HSC26-Bangla1st-Paper.pdf"  
+    pdf_path = "HSC26-Bangla1st-Paper-10MinsSchool.pdf"  
     
     try:
         
@@ -394,7 +394,7 @@ if __name__ == "__main__":
 
     
     questions = [
-        "anupomer boyosh koto?",
+        "বিয়ের সময় কল্যাণীর প্রকৃত বয়স কত ছিল?",
         
         
     ]
@@ -406,7 +406,14 @@ if __name__ == "__main__":
         print(f"A: {response['answer']}")
         print(f"Retrieved chunks: {len(response['retrieved_documents'])}")
         print("-" * 50)
-
-    # Save system state
+    
     rag.save_system("rag_system_gpt4_state.pkl")
     print("\n✅ Saved system state")
+
+import gradio as gr
+
+def ask_question(q):
+        response = rag.query(q)
+        return response['answer']
+
+gr.Interface(fn=ask_question, inputs="text", outputs="text", title="Bangla RAG QA").launch()
