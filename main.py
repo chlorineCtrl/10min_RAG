@@ -377,26 +377,25 @@ Please provide a direct and accurate answer based on the available context."""
 
 
 if __name__ == "__main__":
-
+    
     rag = MultilingualRAGSystem()
 
-    # dummy 
-    dummy_bangla_text = """
-    আনুপম একজন মেধাবী ছাত্র। তার বয়স পনের বছর। সে প্রতিদিন সকালে স্কুলে যায়।
-    তার বাবা একজন শিক্ষক। মা গৃহিণী। আনুপম পড়াশোনায় খুব ভালো।
-    সে ভবিষ্যতে একজন ডাক্তার হতে চায়। সে বাংলায় রচনা লিখতেও খুব পছন্দ করে।
-    আনুপমের মামা তাকে সুপুরুষ বলে ডাকেন। পরিবারে সবাই তাকে ভাগ্য দেবতা মনে করে।
-    """
+    
+    pdf_path = "HSC26-Bangla1st-Paper.pdf"  
+    
+    try:
+        
+        num_chunks = rag.load_knowledge_base(pdf_path)
+        print(f"✅ Successfully loaded PDF and created {num_chunks} chunks")
+        
+    except Exception as e:
+        print(f"❌ Error loading PDF: {e}")
+        exit(1)
 
-    chunks = rag.document_processor.create_chunks(dummy_bangla_text)
-    print(f"\n✅ Created {len(chunks)} chunks from dummy text")
-
-    rag.vector_store.add_documents(chunks)
-    rag.memory.set_long_term_memory(rag.vector_store)
-
-   
+    
     questions = [
-        "আনুপমের বাবার বয়স কত?",
+        "anupomer boyosh koto?",
+        
         
     ]
 
@@ -405,12 +404,9 @@ if __name__ == "__main__":
         response = rag.query(question)
         print(f"\nQ: {response['query']}")
         print(f"A: {response['answer']}")
+        print(f"Retrieved chunks: {len(response['retrieved_documents'])}")
         print("-" * 50)
 
+    # Save system state
     rag.save_system("rag_system_gpt4_state.pkl")
-    print("\n✅ Saved system state with GPT-4.1 integration")
-    
-    print("\n=== Conversation History ===")
-    for item in rag.memory.short_term_memory:
-        print(f"Q: {item['query']}")
-        print(f"A: {item['response']}\n")
+    print("\n✅ Saved system state")
