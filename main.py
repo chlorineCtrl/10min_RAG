@@ -205,7 +205,7 @@ class ConversationMemory:
         self.short_term_memory = []  
         self.max_short_term = max_short_term
         self.long_term_memory = None  
-        
+    
     def add_to_short_term(self, query: str, response: str):
         """Add query-response pair to short-term memory"""
         self.short_term_memory.append({
@@ -215,7 +215,7 @@ class ConversationMemory:
         })
         
         if len(self.short_term_memory) > self.max_short_term:
-            self.short_term_memory = self.short_term_memory[-self.max_short_term:]
+            self.short_term_memory.pop(0)  
     
     def get_context(self, current_query: str) -> str:
         """Get relevant context from short-term memory"""
@@ -224,16 +224,26 @@ class ConversationMemory:
         
         context = "Previous conversation:\n"
         for memory in self.short_term_memory[-3:]:  
-            context += f"Q: {memory['query']}\nA: {memory['response']}\n\n"
+            context += f"User: {memory['query']}\nAssistant: {memory['response']}\n\n"
         
         return context
-    
-    def set_long_term_memory(self, vector_store: MultilingualVectorStore):
-        """Set the document vector store as long-term memory"""
+
+    def set_long_term_memory(self, vector_store):
+        """Set the long-term memory (vector store)"""
         self.long_term_memory = vector_store
-    
-    def get_short_term_memory(self) -> List[Dict]:
-        return self.short_term_memory
+        
+    def get_short_term_memory(self) -> str:
+        """Returns the last few user/assistant exchanges as a formatted string"""
+        if not self.short_term_memory:
+            return "No previous conversation yet."
+
+        history = "Short-Term Memory:\n\n"
+        for m in self.short_term_memory[-5:]:  
+            history += f" User: {m['query']}\n Assistant: {m['response']}\n\n"
+        return history.strip()
+
+
+
 
 
 class MultilingualRAGSystem:
@@ -289,7 +299,7 @@ Context format: You will receive relevant document chunks and conversation histo
         return len(chunks)
     
     def _generate_answer_with_gpt4(self, query: str, context: str, retrieved_docs: List[Tuple[Dict, float]]) -> str:
-        """Generate answer using OpenAI GPT-4.1"""
+        """Generate answer using GPT-4.1"""
         try:
             relevant_context = ""
             for i, (doc, score) in enumerate(retrieved_docs[:3]):
@@ -297,16 +307,16 @@ Context format: You will receive relevant document chunks and conversation histo
             
             user_message = f"""Based on the following context, please answer this question:
 
-Question: {query}
+    Question: {query}
 
-Available Context:
-{relevant_context}
+    Available Context:
+    {relevant_context}
 
-Previous Conversation Context:
-{context}
+    Previous Conversation Context:
+    {context}
 
-Please provide a direct and accurate answer based on the available context, and ensure the answer is under 5 words only."""
-
+    Please provide a direct and accurate answer based on the available context."""
+            
             response = self.client.complete(
                 messages=[
                     SystemMessage(self.system_prompt),
@@ -322,7 +332,8 @@ Please provide a direct and accurate answer based on the available context, and 
             
         except Exception as e:
             print(f"Error generating answer with GPT-4.1: {e}")
-            return "দুঃখিত, উত্তর তৈরি করতে সমস্যা হয়েছে। / Sorry, there was an issue generating the answer."
+            return "দুঃখিত, উত্তরটি নেই! / Sorry, there was no answer!"
+
     
     def query(self, user_query: str, k: int = 10) -> Dict[str, Any]:
         """Process user query and generate response using GPT-4.1"""
@@ -332,7 +343,7 @@ Please provide a direct and accurate answer based on the available context, and 
         
         answer = self._generate_answer_with_gpt4(user_query, context, retrieved_docs)
         
-        self.memory.add_to_short_term(user_query, answer)
+        self.memory.add_to_short_term(user_query, answer)  
         
         response = {
             'query': user_query,
@@ -349,6 +360,7 @@ Please provide a direct and accurate answer based on the available context, and 
         }
         
         return response
+
     
     def save_system(self, filepath: str):
         """Save the system state"""
@@ -408,6 +420,10 @@ if __name__ == "__main__":
         print(f"A: {response['answer']}")
         print(f"Retrieved chunks: {len(response['retrieved_documents'])}")
         print("-" * 50)
+
+        
+        print(rag.memory.get_short_term_memory())
+
     
     rag.save_system("rag_system_gpt4_state.pkl")
     print("\n✅ Saved system state")
@@ -415,7 +431,9 @@ if __name__ == "__main__":
 import gradio as gr
 
 def ask_question(q):
-        response = rag.query(q)
-        return response['answer']
+    response = rag.query(q)
+    memory = rag.memory.get_short_term_memory()
+    return f"{response['answer']}\n\n\n---\n{memory}"
 
-gr.Interface(fn=ask_question, inputs="text", outputs="text", title="Bangla RAG QA").launch()
+
+gr.Interface(fn=ask_question, inputs="text", outputs="text", title="Bangla RAG QA with Memory").launch()
