@@ -107,7 +107,7 @@ class DocumentProcessor:
         
         return text
     
-    def create_chunks(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[Dict]:
+    def create_chunks(self, text: str, chunk_size: int = 300, overlap: int = 150) -> List[Dict]:
         """Create overlapping text chunks with metadata"""
         # Clean the text
         cleaned_text = self.bengali_processor.clean_bengali_text(text)
@@ -154,7 +154,7 @@ class DocumentProcessor:
 class MultilingualVectorStore:
     """Vector store supporting both Bengali and English"""
     
-    def __init__(self, model_name: str = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'):
+    def __init__(self, model_name: str = 'intfloat/multilingual-e5-large'):
         self.model = SentenceTransformer(model_name)
         self.chunks = []
         self.embeddings = None
@@ -181,7 +181,9 @@ class MultilingualVectorStore:
         if self.index is None:
             return []
         
+        
         cleaned_query = self.bengali_processor.clean_bengali_text(query)
+        cleaned_query = "query: " + cleaned_query.strip()
         
         query_embedding = self.model.encode([cleaned_query], convert_to_numpy=True)
         faiss.normalize_L2(query_embedding)
@@ -303,7 +305,7 @@ Available Context:
 Previous Conversation Context:
 {context}
 
-Please provide a direct and accurate answer based on the available context, and ensure the answer is under 3 words only."""
+Please provide a direct and accurate answer based on the available context, and ensure the answer is under 5 words only."""
 
             response = self.client.complete(
                 messages=[
@@ -322,7 +324,7 @@ Please provide a direct and accurate answer based on the available context, and 
             print(f"Error generating answer with GPT-4.1: {e}")
             return "দুঃখিত, উত্তর তৈরি করতে সমস্যা হয়েছে। / Sorry, there was an issue generating the answer."
     
-    def query(self, user_query: str, k: int = 5) -> Dict[str, Any]:
+    def query(self, user_query: str, k: int = 10) -> Dict[str, Any]:
         """Process user query and generate response using GPT-4.1"""
         context = self.memory.get_context(user_query)
         
