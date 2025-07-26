@@ -315,7 +315,7 @@ Context format: You will receive relevant document chunks and conversation histo
     Previous Conversation Context:
     {context}
 
-    Please provide a direct and accurate answer based on the available context."""
+    Please provide a direct and accurate answer based on the available context and answer within 5 words."""
             
             response = self.client.complete(
                 messages=[
@@ -400,15 +400,15 @@ if __name__ == "__main__":
     try:
         
         num_chunks = rag.load_knowledge_base(pdf_path)
-        print(f"✅ Successfully loaded PDF and created {num_chunks} chunks")
+        print(f" Successfully loaded PDF and created {num_chunks} chunks")
         
     except Exception as e:
-        print(f"❌ Error loading PDF: {e}")
+        print(f" Error loading PDF: {e}")
         exit(1)
 
     
     questions = [
-        "বিয়ের সময় কল্যাণীর প্রকৃত বয়স কত ছিল?",
+        "'জড়িমা' শব্দের অর্থ কী?",
         
         
     ]
@@ -426,14 +426,14 @@ if __name__ == "__main__":
 
     
     rag.save_system("rag_system_gpt4_state.pkl")
-    print("\n✅ Saved system state")
+    print("\n Saved system state")
 
 import gradio as gr
 
-def ask_question(q):
-    response = rag.query(q)
+def ask_question(ask):
+    response = rag.query(ask)
     memory = rag.memory.get_short_term_memory()
     return f"{response['answer']}\n\n\n---\n{memory}"
 
 
-gr.Interface(fn=ask_question, inputs="text", outputs="text", title="Bangla RAG QA with Memory").launch()
+gr.Interface(fn=ask_question, inputs="text", outputs="text", title="10Minute School RAG System for Students").launch()
