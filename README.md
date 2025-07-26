@@ -1,4 +1,4 @@
-<img width="578" height="286" alt="{9547E0D6-27B8-4D46-B47F-85350863DDDD}" src="https://github.com/user-attachments/assets/e7240764-ced4-4719-aa8d-36ca77a1a448" />## Overall Used Libraries / Technologies
+## Overall Used Libraries / Technologies
 
 ![Technologies Used](https://github.com/user-attachments/assets/bdaa3248-423f-4cf3-8dba-ff81ed7197fe)
 
@@ -115,8 +115,11 @@ python main.py
 ### Sample queries and outputs
 By opening gradio in a browser (as instructed in the setup portion above) you can test the model :
 1. It accepts user queries and generates answers in a simple UI based on the retrieved information:
-  <img width="626" height="779" alt="{9547E0D6-27B8-4D46-B47F-85350863DDDD}" src="https://github.com/user-attachments/assets/33b28467-f48b-4dce-8db3-08e059f51c07" />
+- <img width="626" height="779" alt="{9547E0D6-27B8-4D46-B47F-85350863DDDD}" src="https://github.com/user-attachments/assets/33b28467-f48b-4dce-8db3-08e059f51c07" />
 2. It maintains Long-Short term memory :
- <img width="626" height="779" alt="{627C610E-3EAF-469A-880D-89F9E0669178}" src="https://github.com/user-attachments/assets/2fbc7ef4-7dad-4fea-a667-4013673722a4" />
+- <img width="626" height="779" alt="{627C610E-3EAF-469A-880D-89F9E0669178}" src="https://github.com/user-attachments/assets/2fbc7ef4-7dad-4fea-a667-4013673722a4" />
 
+
+# Here is a short Demo :
+[![Watch the demo](thumbnail.png)](https://drive.google.com/file/d/1nbepPWfvm-OJdOxvszwSTqHGXA_CaY0B/view?usp=sharing)
 
