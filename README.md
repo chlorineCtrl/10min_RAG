@@ -97,7 +97,7 @@ pip install -r requirements.txt
 # 4. Set up environment variables
 
 # Create a .env file with the following content:
-(this token is sensetive in a public repo so I hide it using .gitignore, I have provided this token in the Google form provided in the mail)
+(this token is sensetive in a public repo so I hide it using .gitignore, I have provided this token in "Source code (on GitHub Public Repo) & README file" section of the google form)
 echo "GITHUB_TOKEN=your_azure_inference_token_here" > .env
 
 
