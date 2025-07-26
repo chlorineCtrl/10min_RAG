@@ -12,6 +12,7 @@ The primary library used is **PyMuPDF**, with a fallback to **PyPDF2**.
 
 - **PyMuPDF** is chosen because of its excellent support for **Unicode and multilingual text**, which is critical for processing Bengali-language documents.
 - If PyMuPDF fails, the system falls back to **PyPDF2**, which offers a basic but reliable method for PDF parsing.
+- The given pdf seems to have a legacy encoder going on, was change to unicode to mordernize and to get the best output from the RAG.
 
 ---
 
